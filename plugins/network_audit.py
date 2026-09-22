@@ -135,13 +135,21 @@ class NetworkAudit(Plugin):
         gateway = iface = cidr = ""
         gw_re = re.compile(r"default via (\d+\.\d+\.\d+\.\d+) dev (\S+)")
 
-        # Try progressively broader route sources. (cmd, use_root)
+        # Source 0: /proc/net/route — a plain file that is usually readable in
+        # Termux WITHOUT root, even when the `ip` command is sandboxed by
+        # Android. It gives the default gateway, interface AND the on-link
+        # subnet directly, so we try it first.
+        gateway, iface, cidr = self._read_proc_route()
+
+        # Source 1..N: the `ip` command, progressively broader. (cmd, use_root)
         route_attempts = [
             ("ip route", False),
             ("ip route show table all", False),
             ("ip route show table all", bool(ctx.settings.root_wrapper)),
         ]
         for cmd, use_root in route_attempts:
+            if gateway:
+                break
             try:
                 _, route = await ctx.capture(cmd, use_root=use_root)
             except Exception:
@@ -159,6 +167,8 @@ class NetworkAudit(Plugin):
         ]
         best = None
         for cmd, use_root in addr_attempts:
+            if cidr:
+                break  # already have a subnet from /proc/net/route
             try:
                 _, addrs = await ctx.capture(cmd, use_root=use_root)
             except Exception:
@@ -189,6 +199,60 @@ class NetworkAudit(Plugin):
             cidr = re.sub(r"\.\d+$", ".0/24", gateway)
 
         return gateway, cidr, iface
+
+    # -- /proc/net/route parsing (root-free Android fallback) -----------------
+
+    @staticmethod
+    def _hex_le_ip(hex8: str) -> str:
+        """Convert a little-endian 32-bit hex value (as in /proc/net/route)
+        into a dotted IPv4 string. E.g. '0102A8C0' -> '192.168.2.1'."""
+        try:
+            b = bytes.fromhex(hex8)
+            return ".".join(str(x) for x in reversed(b))
+        except ValueError:
+            return ""
+
+    @classmethod
+    def _mask_prefix(cls, hex8: str) -> int:
+        """Netmask hex -> prefix length. E.g. '00FFFFFF' -> 24."""
+        ip = cls._hex_le_ip(hex8)
+        if not ip:
+            return 0
+        return sum(bin(int(o)).count("1") for o in ip.split("."))
+
+    def _read_proc_route(self) -> tuple[str, str, str]:
+        """Parse /proc/net/route for (gateway, iface, subnet_cidr).
+
+        This file is a normal /proc entry and is typically readable in Termux
+        without root, unlike the sandboxed `ip` command on modern Android.
+        Columns: Iface Destination Gateway Flags RefCnt Use Metric Mask ...
+        """
+        try:
+            with open("/proc/net/route", "r") as fh:
+                rows = [ln.split() for ln in fh.read().splitlines()[1:]]
+        except OSError:
+            return "", "", ""
+
+        rows = [r for r in rows if len(r) >= 8]
+        gateway = iface = cidr = ""
+
+        # Default route: Destination == 0, Gateway != 0.
+        for dev, dest, gw, _flags, _ref, _use, _metric, mask, *_ in rows:
+            if dest == "00000000" and gw != "00000000":
+                gateway, iface = self._hex_le_ip(gw), dev
+                break
+
+        # On-link subnet: a route with a real destination + mask (prefer our
+        # gateway's interface).
+        for dev, dest, gw, _flags, _ref, _use, _metric, mask, *_ in rows:
+            if dest != "00000000" and mask not in ("00000000", ""):
+                net = self._hex_le_ip(dest)
+                prefix = self._mask_prefix(mask)
+                if net and prefix and (dev == iface or not iface):
+                    cidr = f"{net}/{prefix}"
+                    if dev == iface:
+                        break
+        return gateway, iface, cidr
 
     @staticmethod
     def _network_cidr(addr_cidr: str) -> str:
