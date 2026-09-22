@@ -56,11 +56,19 @@ class NetworkAudit(Plugin):
         if gateway:
             yield ev.ok(f"Default gateway (router): {gateway}")
         else:
-            yield ev.warn("Could not determine default gateway from `ip route`.")
+            yield ev.warn(
+                "Could not determine default gateway. On Android the route is "
+                "often hidden from unprivileged apps — try running TxUltra with "
+                "root (e.g. `tsu -c \"python txultra.py\"`)."
+            )
         if cidr:
             yield ev.ok(f"Your subnet: {cidr}  (interface {iface})")
         else:
-            yield ev.error("Could not determine your subnet — is Wi-Fi connected?")
+            yield ev.error(
+                "Could not determine your subnet. Check: (1) Wi-Fi is connected, "
+                "(2) `iproute2` is installed (pkg install iproute2), (3) run with "
+                "root — Android restricts `ip` output for non-root apps."
+            )
             return
 
         # Current AP encryption (best-effort, needs termux-api).
@@ -117,31 +125,69 @@ class NetworkAudit(Plugin):
     # ------------------------------------------------------------------ facts
 
     async def _local_facts(self, ctx) -> tuple[str, str, str]:
-        """Return (gateway_ip, subnet_cidr, interface)."""
-        gateway = iface = cidr = ""
-        _, route = await ctx.capture("ip route")
-        m = re.search(r"default via (\d+\.\d+\.\d+\.\d+) dev (\S+)", route)
-        if m:
-            gateway, iface = m.group(1), m.group(2)
+        """Return (gateway_ip, subnet_cidr, interface).
 
-        _, addrs = await ctx.capture("ip -o -f inet addr show")
-        # Prefer the line for our gateway interface; else first non-loopback.
-        best = None
-        for line in addrs.splitlines():
-            m = re.search(r"\d+:\s+(\S+)\s+inet\s+(\d+\.\d+\.\d+\.\d+/\d+)", line)
-            if not m:
+        Android keeps routes in per-network tables, not the main table, so a
+        plain ``ip route`` is usually empty for an unprivileged process. We try
+        several sources — the main table, ``table all``, and the same with root
+        — before giving up, and derive a /24 from the gateway as a last resort.
+        """
+        gateway = iface = cidr = ""
+        gw_re = re.compile(r"default via (\d+\.\d+\.\d+\.\d+) dev (\S+)")
+
+        # Try progressively broader route sources. (cmd, use_root)
+        route_attempts = [
+            ("ip route", False),
+            ("ip route show table all", False),
+            ("ip route show table all", bool(ctx.settings.root_wrapper)),
+        ]
+        for cmd, use_root in route_attempts:
+            try:
+                _, route = await ctx.capture(cmd, use_root=use_root)
+            except Exception:
                 continue
-            dev, addr = m.group(1), m.group(2)
-            if dev == "lo":
-                continue
-            if iface and dev == iface:
-                best = (dev, addr)
+            m = gw_re.search(route)
+            if m:
+                gateway, iface = m.group(1), m.group(2)
                 break
-            if best is None:
-                best = (dev, addr)
+
+        # Interface addresses — try one-line formats, unprivileged then root.
+        addr_attempts = [
+            ("ip -o -f inet addr show", False),
+            ("ip -o addr show", False),
+            ("ip -o -f inet addr show", bool(ctx.settings.root_wrapper)),
+        ]
+        best = None
+        for cmd, use_root in addr_attempts:
+            try:
+                _, addrs = await ctx.capture(cmd, use_root=use_root)
+            except Exception:
+                continue
+            for line in addrs.splitlines():
+                m = re.search(
+                    r"\d+:\s+(\S+)\s+inet\s+(\d+\.\d+\.\d+\.\d+/\d+)", line
+                )
+                if not m:
+                    continue
+                dev, addr = m.group(1), m.group(2)
+                if dev == "lo":
+                    continue
+                if iface and dev == iface:
+                    best = (dev, addr)
+                    break
+                if best is None:
+                    best = (dev, addr)
+            if best is not None:
+                break
+
         if best:
             iface = iface or best[0]
             cidr = self._network_cidr(best[1])
+
+        # Last resort: if we know the gateway but not the subnet, assume /24.
+        if not cidr and gateway:
+            cidr = re.sub(r"\.\d+$", ".0/24", gateway)
+
         return gateway, cidr, iface
 
     @staticmethod
