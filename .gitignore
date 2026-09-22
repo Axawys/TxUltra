@@ -1,0 +1,28 @@
+# Local, user-specific config (copy from config.example.toml)
+config.toml
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.eggs/
+build/
+dist/
+
+# Virtual environments
+.venv/
+venv/
+env/
+
+# Captured Wi-Fi handshakes / scan artifacts (never commit these)
+*.cap
+*.csv
+*.pcap
+*.hccapx
+*.kismet*
+
+# Editor / OS noise
+.vscode/
+.idea/
+*.swp
+.DS_Store

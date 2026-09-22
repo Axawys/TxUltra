@@ -1,0 +1,31 @@
+# TxUltra configuration example.
+# Copy to `config.toml` (same folder as txultra.py) and edit.
+# Every key is optional; sane defaults are used when a key is missing.
+
+[general]
+# UI theme: "dark" or "light".
+theme = "dark"
+
+[network]
+# Default wireless interface used by modules when they need one.
+# In Termux with an OTG adapter this is often "wlan0" or "wlan1".
+default_interface = "wlan0"
+
+[root]
+# Command used to elevate privileges in Termux.
+# Common choices: "tsu", "su -c", "sudo".
+# Leave empty to run everything unprivileged (many Wi-Fi features will be
+# unavailable without root).
+wrapper = "tsu"
+
+[wifi]
+# Path to the wordlist used by the Wi-Fi pentest module (aircrack-ng -w).
+wordlist = "/sdcard/wordlists/rockyou.txt"
+
+# Number of deauth frames to send when forcing a reconnect on YOUR OWN
+# network to capture a handshake. Kept small on purpose.
+deauth_count = 5
+
+# Seconds to run a scan/capture step before it is auto-stopped.
+scan_seconds = 20
+capture_seconds = 60

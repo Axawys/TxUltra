@@ -1,0 +1,5 @@
+# TxUltra runtime dependencies
+# Everything else (nmap, aircrack-ng, arp-scan, iw ...) are EXTERNAL binaries
+# installed via `pkg install` in Termux — see README.md.
+textual>=0.60
+rich>=13.0
