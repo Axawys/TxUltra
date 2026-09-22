@@ -21,7 +21,12 @@ class LogPanel(RichLog):
     def __init__(self, **kwargs) -> None:
         # markup=False: plugin output is untrusted text, don't parse markup in
         # it. We build styled Text ourselves for the level prefix.
-        super().__init__(highlight=False, markup=False, wrap=True, **kwargs)
+        # wrap=True + min_width=0: RichLog defaults min_width to 78, which forces
+        # long lines to render at 78 cols and get cut off on a narrow phone
+        # screen. min_width=0 lets lines wrap to the actual widget width.
+        super().__init__(
+            highlight=False, markup=False, wrap=True, min_width=0, **kwargs
+        )
 
     def write_event(self, level: str, text: str) -> None:
         glyph, style = LEVEL_STYLE.get(level, ("  ", "white"))
