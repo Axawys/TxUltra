@@ -125,6 +125,12 @@ install it. Verify monitor capability with `iw list` (look for `* monitor`).
 The live log colour-codes severity (info/ok/warn/error) and auto-scrolls; long
 steps show a spinner and progress bar.
 
+**Responsive layout.** TxUltra adapts to the terminal size. On a narrow
+portrait phone screen it stacks vertically — a compact module strip on top and
+the live log filling the tall screen, with full-width buttons for thumb taps.
+On a wide/landscape terminal it switches to a side-by-side sidebar + main panel.
+It re-flows automatically when you rotate the device.
+
 ---
 
 ## Writing your own module

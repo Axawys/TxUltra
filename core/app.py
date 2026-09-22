@@ -16,7 +16,7 @@ from pathlib import Path
 
 from textual import on
 from textual.app import App, ComposeResult
-from textual.containers import Horizontal, Vertical
+from textual.containers import Container, Horizontal, Vertical
 from textual.widgets import (
     Button,
     Footer,
@@ -62,16 +62,18 @@ class TxUltraApp(App):
     SUB_TITLE = "modular security TUI for Termux"
 
     CSS = """
+    /* ---- default (wide / landscape) : sidebar beside the main panel ---- */
+    #body { layout: horizontal; height: 1fr; }
     #sidebar {
         width: 32;
         border-right: solid $primary;
     }
     #sidebar-title { padding: 0 1; background: $primary; color: $text; }
     #menu { height: 1fr; }
-    #main { width: 1fr; }
+    #main { width: 1fr; height: 1fr; }
     #details {
         height: auto;
-        min-height: 5;
+        min-height: 3;
         padding: 0 1;
         border-bottom: solid $primary-darken-2;
     }
@@ -81,8 +83,28 @@ class TxUltraApp(App):
     #progress { padding: 0 1; height: 1; }
     #status { padding: 0 1; height: 1; background: $panel; }
 
+    /* ---- narrow (portrait phone) : stack everything vertically ----
+       Horizontal width is scarce on a tall phone screen, vertical space is
+       plentiful — so the menu becomes a short top strip and the live log
+       takes the rest of the height. Buttons go full-width for thumb taps. */
+    .narrow #body { layout: vertical; }
+    .narrow #sidebar {
+        width: 100%;
+        height: auto;
+        max-height: 40%;
+        border-right: none;
+        border-bottom: solid $primary;
+    }
+    .narrow #menu { height: auto; max-height: 14; }
+    .narrow #main { width: 100%; height: 1fr; }
+    .narrow #details { max-height: 7; overflow-y: auto; }
+    .narrow #controls { layout: horizontal; height: 3; padding: 0; }
+    .narrow #controls Button { width: 1fr; height: 3; margin: 0; }
+    .narrow #progress { height: 1; }
+
+    /* ---- modals : fit a narrow screen instead of a fixed 70 cols ---- */
     #modal-box {
-        width: 70; height: auto; max-height: 80%;
+        width: 90%; max-width: 70; height: auto; max-height: 85%;
         padding: 1 2; border: thick $primary; background: $surface;
         align: center middle;
     }
@@ -90,7 +112,7 @@ class TxUltraApp(App):
     #modal-message { padding-bottom: 1; }
     #modal-list { height: auto; max-height: 16; }
     #modal-buttons { height: auto; align: center middle; }
-    #modal-buttons Button { margin: 1 0 0 0; width: 100%; }
+    #modal-buttons Button { margin: 1 0 0 0; width: 100%; height: 3; }
     """
 
     BINDINGS = [
@@ -117,7 +139,9 @@ class TxUltraApp(App):
 
     def compose(self) -> ComposeResult:
         yield Header(show_clock=True)
-        with Horizontal():
+        # #body flips between horizontal (wide) and vertical (portrait) layout
+        # via the ``narrow`` class toggled in _apply_responsive().
+        with Container(id="body"):
             with Vertical(id="sidebar"):
                 yield Static("Modules", id="sidebar-title")
                 yield ListView(*self._build_menu(), id="menu")
@@ -148,22 +172,34 @@ class TxUltraApp(App):
         theme = "dark" if self.settings.theme != "light" else "light"
         return (
             f"[b]Welcome to TxUltra[/b]  —  {n} module(s) loaded.\n"
-            f"Select a module on the left (arrows/Tab or tap), then [b]Run ▶[/b] "
-            f"or press [b]r[/b]. Press [b]s[/b]/[b]Esc[/b] to stop, [b]q[/b] to quit.\n"
+            f"Pick a module (arrows/Tab or tap), then [b]Run ▶[/b] or press "
+            f"[b]r[/b]. Press [b]s[/b]/[b]Esc[/b] to stop, [b]q[/b] to quit.\n"
             f"[dim]interface={self.settings.default_interface}  "
             f"root_wrapper={self.settings.root_wrapper or '(none)'}  theme={theme}[/dim]"
         )
 
     # -- lifecycle ------------------------------------------------------------
 
+    # Below this terminal width we switch to the portrait / stacked layout.
+    NARROW_WIDTH = 64
+
     def on_mount(self) -> None:
         self.theme = "textual-dark" if self.settings.theme != "light" else "textual-light"
+        self._apply_responsive(self.size.width)  # set initial layout
         log = self.query_one("#log", LogPanel)
         log.write_event("info", "TxUltra started. Plugins auto-loaded from plugins/.")
         for module, error in self._load.errors:
             log.write_event("error", f"failed to load {module}: {error}")
         self.query_one("#status", StatusBar).set_label("Idle")
         self.query_one("#progress", ProgressBar).update(total=100, progress=0)
+
+    def on_resize(self, event) -> None:
+        # Re-evaluate layout whenever the terminal is resized / rotated.
+        self._apply_responsive(event.size.width)
+
+    def _apply_responsive(self, width: int) -> None:
+        """Toggle the portrait (stacked) layout on narrow screens."""
+        self.set_class(width < self.NARROW_WIDTH, "narrow")
 
     # -- menu interaction -----------------------------------------------------
 
